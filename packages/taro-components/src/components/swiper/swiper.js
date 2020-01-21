@@ -1,12 +1,32 @@
 import Nerv from 'nervjs'
 import classNames from 'classnames'
 import './style/swiper.scss'
+import { isNumber } from '../../../utils/parse-type'
 
+/**
+ * props 类型检测
+ *
+ * @param {Object} props
+ */
+function parseType (props) {
+  const {
+    current
+  } = props
+
+  // 抛出错误信息
+  const throwErrorMsg = type => {
+    throw new TypeError(type + ' must be number')
+  }
+
+  if (current) isNumber(current) ? '' : throwErrorMsg('current')
+}
 class Swiper extends Nerv.Component {
   constructor (props) {
     super(props)
+    parseType(this.props)
+
     this.state = {
-      currentIndex: this.props.current,
+      currentIndex: parseInt(this.props.current),
       containerWidth: 0,
       containerHeight: 0,
       // touch
@@ -24,49 +44,20 @@ class Swiper extends Nerv.Component {
     this.pauseAutoPlay = this.pauseAutoPlay.bind(this)
     this.autoplay = this.autoplay.bind(this)
     this.computedChangeContainer = this.computedChangeContainer.bind(this)
+    this.updateContainerBox = this.updateContainerBox.bind(this)
   }
 
   componentDidMount () {
-    let $container = Nerv.findDOMNode(this.SwiperWp)
+    this.updateContainerBox(this.props.children)
 
-    // 默认偏移量
-    let offsetVal =
-      this.props.current <= this.props.children.length + 2
-        ? !this.props.vertical
-          ? $container.offsetWidth * -this.props.current
-          : $container.offsetHeight * -this.props.current
-        : 0
-    let childLen = this.props.children.length
-
-    // 是否衔接滑动
-    // if (this.props.circular) {
-    offsetVal = this.props.vertical
-      ? -$container.offsetHeight * (this.props.current + 1)
-      : -$container.offsetWidth * (this.props.current + 1)
-
-    childLen = childLen + 2
-    // }
-
-    this.setState({
-      containerWidth: $container.offsetWidth, // 外层容器宽
-      containerHeight: $container.offsetHeight, // 外层容器高
-      wrapperWidth: !this.props.vertical // 轮播容器 是否纵向滑动，不是的话计算总宽度
-        ? $container.offsetWidth * childLen
-        : $container.offsetWidth,
-      wrapperHeight: this.props.vertical // 轮播容器 是否纵向滑动，是的话计算总高度
-        ? $container.offsetHeight * childLen
-        : $container.offsetHeight,
-      // 计算指定下标位置
-      translate: offsetVal
-    })
-
-    if (this.props.autoplay) this.autoplay(this.props.autoplay)
+    if (this.props.autoplay) this.autoplay(this.props.interval)
   }
 
   componentWillReceiveProps (nextProps) {
-    const { interval, autoplay, circular } = nextProps
+    this.updateContainerBox(nextProps.children)
+    const { interval, autoplay, circular, current } = nextProps
     this.pauseAutoPlay()
-    // this.updateCurrentIndex(current)
+    this.updateCurrentIndex(current)
     if (!circular) {
       this.computedChangeContainer()
     }
@@ -88,22 +79,50 @@ class Swiper extends Nerv.Component {
     return false
   }
 
+  // 更新容器的宽高
+  updateContainerBox (children) {
+    let $container = Nerv.findDOMNode(this.SwiperWp)
+    let childLen = children.length || 1
+    let currentIndex = this.state.currentIndex
+    // 默认偏移量
+    let offsetVal = this.props.vertical
+      ? -$container.offsetHeight * (currentIndex + 1)
+      : -$container.offsetWidth * (currentIndex + 1)
+    childLen = childLen + 2
+
+    this.setState({
+      containerWidth: $container.offsetWidth, // 外层容器宽
+      containerHeight: $container.offsetHeight, // 外层容器高
+      wrapperWidth: !this.props.vertical // 轮播容器 是否纵向滑动，不是的话计算总宽度
+        ? $container.offsetWidth * childLen
+        : $container.offsetWidth,
+      wrapperHeight: this.props.vertical // 轮播容器 是否纵向滑动，是的话计算总高度
+        ? $container.offsetHeight * childLen
+        : $container.offsetHeight,
+      // 计算指定下标位置
+      translate: offsetVal
+    })
+  }
+
   // 更新下标
   updateCurrentIndex (currentIndex) {
-    let cur = currentIndex === this.props.children.length - 1 ? 0 : currentIndex
     let tr = this.state.translate
     let slideVal // 纵向还是横向滚动长度
 
+    if (currentIndex < 0) currentIndex = this.props.children.length - 1
+    if (currentIndex >= this.props.children.length) currentIndex = 0
+
     if (!this.props.vertical) {
-      slideVal = this.state.containerWidth * Math.abs(currentIndex - this.state.currentIndex)
+      slideVal = this.state.containerWidth * (currentIndex - this.state.currentIndex)
     } else {
-      slideVal = this.state.containerHeight * Math.abs(currentIndex - this.state.currentIndex)
+      slideVal = this.state.containerHeight * (currentIndex - this.state.currentIndex)
     }
+
     this.setState(
       {
         animating: true,
         translate: tr - slideVal,
-        currentIndex: cur
+        currentIndex: currentIndex
       },
       () => {
         setTimeout(() => {
@@ -198,7 +217,6 @@ class Swiper extends Nerv.Component {
       ? this.state.wrapperWidth - this.state.containerWidth
       : this.state.wrapperHeight - this.state.containerHeight
     let currentIndex = this.state.currentIndex
-    let ogIndex = currentIndex
     if (translate > 0) {
       // start
       translate = 0
@@ -227,7 +245,16 @@ class Swiper extends Nerv.Component {
         }, this.props.duration)
     )
 
-    if (this.props.onChange) this.props.onChange(ogIndex, currentIndex)
+    if (this.props.onChange) {
+      Object.defineProperty(e, 'detail', {
+        enumerable: true,
+        value: {
+          current: currentIndex,
+          source: 'touch'
+        }
+      })
+      this.props.onChange(e)
+    }
     if (this.props.autoplay) this.pauseAutoPlay()
   }
 
@@ -317,17 +344,28 @@ class Swiper extends Nerv.Component {
         }, this.props.duration)
       }
     )
+    if (this.props.onChange) {
+      let e = new TouchEvent('touchend')
+      Object.defineProperty(e, 'detail', {
+        enumerable: true,
+        value: {
+          current: cur,
+          source: 'autoplay'
+        }
+      })
+      this.props.onChange(e)
+    }
   }
 
   isChangeSlide (translate, currentIndex) {
     // 判读滑动到大于一半才过去
-    let threshold = !this.props.vertical
-      ? this.state.containerWidth / 2
-      : this.state.containerHeight / 2
+    // let threshold = !this.props.vertical
+    //   ? this.state.containerWidth / 2
+    //   : this.state.containerHeight / 2
     let diff = Math.abs(translate - this.state.ogTranslate)
     let isNext = translate - this.state.ogTranslate < 0
 
-    if (diff > threshold) {
+    if (diff > 0) {
       if (isNext) {
         // next slide
         translate =
@@ -356,17 +394,24 @@ class Swiper extends Nerv.Component {
   }
 
   renderPagination (indicatorColor, indicatorActiveColor) {
-    const childs = this.props.children.map((child, i) => {
-      let clx = classNames('swiper__pagination-bullet', {
-        active: i === this.state.currentIndex
+    if (Array.isArray(this.props.children)) {
+      const childs = this.props.children.map((child, i) => {
+        let clx = classNames('swiper__pagination-bullet', {
+          active: i === this.state.currentIndex
+        })
+        let indiStyle = {
+          background:
+            i === this.state.currentIndex ? indicatorActiveColor : indicatorColor
+        }
+        return <span className={clx} key={i} style={indiStyle} />
       })
+      return childs
+    } else {
       let indiStyle = {
-        background:
-          i === this.state.currentIndex ? indicatorActiveColor : indicatorColor
+        background: indicatorActiveColor
       }
-      return <span className={clx} key={i} style={indiStyle} />
-    })
-    return childs
+      return <span className={'swiper__pagination-bullet active'} key='1' style={indiStyle} />
+    }
   }
 
   render () {
@@ -376,7 +421,8 @@ class Swiper extends Nerv.Component {
       vertical,
       children,
       circular,
-      duration
+      duration,
+      style
     } = this.props
     const cls = classNames('swiper__container', className, {
       'swiper__container-vertical': vertical,
@@ -393,7 +439,6 @@ class Swiper extends Nerv.Component {
       items.unshift(lastItem)
     }
     // }
-
     let wrapperStyle = {
       width: this.state.wrapperWidth,
       height: this.state.wrapperHeight,
@@ -408,6 +453,7 @@ class Swiper extends Nerv.Component {
     return (
       <div
         className={cls}
+        style={style}
         ref={SwiperWp => {
           this.SwiperWp = SwiperWp
         }}
@@ -445,7 +491,8 @@ class Swiper extends Nerv.Component {
             return Nerv.cloneElement(c, {
               key: i,
               className: cls,
-              style: sty
+              style: sty,
+              onClick: child.props.onClick || c.props.onClick
             })
           })}
         </div>
